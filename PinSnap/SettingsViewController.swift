@@ -57,8 +57,12 @@ class SettingsViewController: NSViewController {
     private func updateHotkeyDisplay() {
         guard let hotkeyField = hotkeyField else { return }
         
-        let keyCode = HotkeySettingsManager.shared.keyCode
-        let modifiers = HotkeySettingsManager.shared.modifiers
+        guard let keyCode = HotkeySettingsManager.shared.keyCode,
+              let modifiers = HotkeySettingsManager.shared.modifiers else {
+            hotkeyField.stringValue = "Cmd + P"
+            return
+        }
+        
         let keyName = keyCodeToString(keyCode)
         let modString = modifiersToString(modifiers)
         hotkeyField.stringValue = "\(modString) + \(keyName)"
@@ -106,7 +110,7 @@ class SettingsViewController: NSViewController {
             let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
             guard !modifiers.isEmpty else { return event }
             
-            self.currentKeyCode = event.keyCode
+            self.currentKeyCode = Int(event.keyCode)
             self.currentModifiers = modifiers
             
             self.stopRecording()
@@ -129,7 +133,7 @@ class SettingsViewController: NSViewController {
     @objc private func saveSettings() {
         if let keyCode = currentKeyCode, let modifiers = currentModifiers {
             HotkeySettingsManager.shared.save(
-                keyCode: KeyItem(carbonKeyCode: UInt32(keyCode)),
+                keyCode: Key(carbonKeyCode: UInt32(keyCode)),
                 modifiers: modifiers
             )
             NotificationCenter.default.post(name: .hotkeySettingsChanged, object: nil)

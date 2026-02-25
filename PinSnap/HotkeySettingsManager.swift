@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 import HotKey
 
 /// Manages hotkey preferences storage using UserDefaults.
@@ -61,14 +62,14 @@ final class HotkeySettingsManager {
     /// - Parameters:
     ///   - keyCode: The key item representing the hotkey key, or `nil` to clear.
     ///   - modifiers: The modifier flags for the hotkey.
-    func save(keyCode: KeyItem?, modifiers: NSEvent.ModifierFlags) {
+    func save(keyCode: Key?, modifiers: NSEvent.ModifierFlags) {
         guard let keyCode = keyCode else {
             self.keyCode = nil
             self.modifiers = nil
             return
         }
         
-        let keyCodeValue = Int(keyCode.rawValue)
+        let keyCodeValue = Int(keyCode.carbonKeyCode)
         guard keyCodeValue > 0 && keyCodeValue <= 127 else {
             return
         }
@@ -83,6 +84,9 @@ final class HotkeySettingsManager {
         guard let keyCode = keyCode, let modifiers = modifiers else {
             return nil
         }
-        return HotKey(keyCode: keyCode, modifiers: modifiers)
+        guard let key = Key(carbonKeyCode: UInt32(keyCode)) else {
+            return nil
+        }
+        return HotKey(key: key, modifiers: modifiers)
     }
 }
