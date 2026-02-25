@@ -249,8 +249,10 @@ class PinnedImageWindowController: NSWindowController {
         self.init(window: window)
         self.pinnedImage = image
         
-        (window as? PinnedWindow)?.onCopyCommand = { [weak self] in
-            self?.copyToClipboard()
+        }
+
+        (window as? PinnedWindow)?.onSaveCommand = { [weak self] in
+            self?.saveToFile()
         }
         
         setupUI(with: image)
