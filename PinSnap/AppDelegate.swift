@@ -31,6 +31,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "截圖並釘選 (Cmd+Shift+P)", action: #selector(startCapture), keyEquivalent: "P"))
         menu.addItem(NSMenuItem.separator())
         
+        // --- 智慧截圖選單 ---
+        let smartCaptureItem = NSMenuItem(title: "智慧截圖", action: nil, keyEquivalent: "")
+        let smartCaptureSubmenu = NSMenu()
+        
+        smartCaptureSubmenu.addItem(NSMenuItem(title: "擷取視窗", action: #selector(captureWindow), keyEquivalent: ""))
+        smartCaptureSubmenu.addItem(NSMenuItem(title: "擷取 UI 元素", action: #selector(captureUIElement), keyEquivalent: ""))
+        smartCaptureSubmenu.addItem(NSMenuItem(title: "自由框選", action: #selector(captureArea), keyEquivalent: ""))
+        
+        smartCaptureItem.submenu = smartCaptureSubmenu
+        menu.addItem(smartCaptureItem)
+        // --------------------
+        
+        menu.addItem(NSMenuItem.separator())
+        
         // --- 加上開機啟動的選項 ---
         let autostartItem = NSMenuItem(title: "開機自動啟動", action: #selector(toggleAutostart(_:)), keyEquivalent: "")
         // 檢查目前的狀態來決定打勾與否
@@ -71,6 +85,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func startCapture() {
         CaptureManager.shared.triggerInteractiveCapture()
+    }
+    
+    // MARK: - 智慧截圖功能
+    @objc func captureWindow() {
+        SmartCaptureManager.shared.startCapture(mode: .window)
+    }
+    
+    @objc func captureUIElement() {
+        SmartCaptureManager.shared.startCapture(mode: .uiElement)
+    }
+    
+    @objc func captureArea() {
+        SmartCaptureManager.shared.startCapture(mode: .area)
     }
     
     // MARK: - 檢查更新
