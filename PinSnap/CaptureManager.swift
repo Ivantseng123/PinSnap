@@ -7,6 +7,17 @@ class CaptureManager {
     static let shared = CaptureManager()
     private var activeControllers: Set<PinnedImageWindowController> = []
     
+    // MARK: - 取得目前滑鼠焦點所在的螢幕
+    private func getCurrentFocusScreen() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        for screen in NSScreen.screens {
+            if screen.frame.contains(mouseLocation) {
+                return screen
+            }
+        }
+        return NSScreen.main // 預設回傳主螢幕
+    }
+    
     func triggerInteractiveCapture() {
         let tempDir = NSTemporaryDirectory()
         let tempFileName = UUID().uuidString + ".png"
@@ -30,7 +41,8 @@ class CaptureManager {
     }
     
     private func createNewPinWindow(with image: NSImage) {
-        let controller = PinnedImageWindowController(image: image)
+        let currentScreen = getCurrentFocusScreen()
+        let controller = PinnedImageWindowController(image: image, targetScreen: currentScreen)
         activeControllers.insert(controller)
         
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: controller.window, queue: nil) { [weak self] notification in
@@ -227,8 +239,18 @@ class PinnedImageWindowController: NSWindowController {
     
     private var imageAnalyzer: Any?
     private var imageInteraction: Any?
+    private var targetScreen: NSScreen?
     
-    convenience init(image: NSImage) {
+    // 自訂初始化器
+    override init(window: NSWindow?) {
+        super.init(window: window)
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+    
+    convenience init(image: NSImage, targetScreen: NSScreen?) {
         let window = PinnedWindow(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
             styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
@@ -249,6 +271,7 @@ class PinnedImageWindowController: NSWindowController {
         
         self.init(window: window)
         self.pinnedImage = image
+        self.targetScreen = targetScreen
         
         (window as? PinnedWindow)?.onCopyCommand = { [weak self] in
             self?.copyToClipboard()
@@ -434,7 +457,19 @@ class PinnedImageWindowController: NSWindowController {
         
         let trackingArea = NSTrackingArea(rect: contentView.bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
         contentView.addTrackingArea(trackingArea)
-        window.center()
+        
+        // MARK: - 多螢幕支援：在目前焦點的螢幕上顯示視窗
+        if let screen = targetScreen {
+            let screenFrame = screen.visibleFrame
+            let windowFrame = window.frame
+            let newOrigin = NSPoint(
+                x: screenFrame.midX - windowFrame.width / 2,
+                y: screenFrame.midY - windowFrame.height / 2
+            )
+            window.setFrameOrigin(newOrigin)
+        } else {
+            window.center()
+        }
     }
     
     private func setupLiveTextOCR(with image: NSImage) {
