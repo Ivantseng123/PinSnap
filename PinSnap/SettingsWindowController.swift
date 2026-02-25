@@ -1,6 +1,6 @@
 import Cocoa
 
-class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController {
     
     convenience init() {
         let viewController = SettingsViewController()
