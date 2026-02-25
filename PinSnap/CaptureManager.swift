@@ -1,5 +1,6 @@
 import Cocoa
 import VisionKit
+import UniformTypeIdentifiers
 
 // MARK: - 截圖管理器
 class CaptureManager {
@@ -337,6 +338,9 @@ class PinnedImageWindowController: NSWindowController {
         let penBtn = createFloatingButton(symbolName: "pencil", action: #selector(toggleDrawingMode(_:)), isToggle: true)
         controlsContainer.addSubview(penBtn)
         
+        let saveBtn = createFloatingButton(symbolName: "square.and.arrow.down", action: #selector(saveToFile))
+        controlsContainer.addSubview(saveBtn)
+        
         drawingToolsStack.orientation = .horizontal
         drawingToolsStack.spacing = 8
         drawingToolsStack.alignment = .centerY
@@ -386,10 +390,13 @@ class PinnedImageWindowController: NSWindowController {
             opacitySlider.leadingAnchor.constraint(equalTo: sliderContainer.leadingAnchor, constant: 10),
             opacitySlider.trailingAnchor.constraint(equalTo: sliderContainer.trailingAnchor, constant: -10),
             
-            copyBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
-            copyBtn.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -55),
-            
-            penBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
+            saveBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
+            saveBtn.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -55),
+                        
+            copyBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant:-12),
+            copyBtn.trailingAnchor.constraint(equalTo: saveBtn.leadingAnchor, constant: -8),
+                    
+            penBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant:-12),
             penBtn.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -8),
             
             drawingToolsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
