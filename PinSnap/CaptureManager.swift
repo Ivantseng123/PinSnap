@@ -1,5 +1,6 @@
 import Cocoa
 import VisionKit
+import UniformTypeIdentifiers
 
 // MARK: - 截圖管理器
 class CaptureManager {
@@ -50,7 +51,8 @@ class PinnedWindow: NSWindow {
     override var canBecomeKey: Bool { return true }
     override var canBecomeMain: Bool { return true }
     override var acceptsFirstResponder: Bool { return true }
-    var onCopyCommand: (() -> Void)?
+var onCopyCommand: (() -> Void)?
+    var onSaveCommand: (() -> Void)?
     
     private var dragStartLocation: NSPoint?
     
@@ -58,10 +60,17 @@ class PinnedWindow: NSWindow {
         if super.performKeyEquivalent(with: event) { return true }
         
         let isCommand = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
+        // Cmd + C 複製
         if isCommand && event.keyCode == 8 {
             onCopyCommand?()
             return true
         }
+        // Cmd + S 存檔
+        if isCommand && event.keyCode == 1 {
+            onSaveCommand?()
+            return true
+        }
+
         return false
     }
     
@@ -244,6 +253,10 @@ class PinnedImageWindowController: NSWindowController {
         (window as? PinnedWindow)?.onCopyCommand = { [weak self] in
             self?.copyToClipboard()
         }
+
+        (window as? PinnedWindow)?.onSaveCommand = { [weak self] in
+            self?.saveToFile()
+        }
         
         setupUI(with: image)
         setupLiveTextOCR(with: image)
@@ -325,6 +338,9 @@ class PinnedImageWindowController: NSWindowController {
         let penBtn = createFloatingButton(symbolName: "pencil", action: #selector(toggleDrawingMode(_:)), isToggle: true)
         controlsContainer.addSubview(penBtn)
         
+        let saveBtn = createFloatingButton(symbolName: "square.and.arrow.down", action: #selector(saveToFile))
+        controlsContainer.addSubview(saveBtn)
+        
         drawingToolsStack.orientation = .horizontal
         drawingToolsStack.spacing = 8
         drawingToolsStack.alignment = .centerY
@@ -374,10 +390,13 @@ class PinnedImageWindowController: NSWindowController {
             opacitySlider.leadingAnchor.constraint(equalTo: sliderContainer.leadingAnchor, constant: 10),
             opacitySlider.trailingAnchor.constraint(equalTo: sliderContainer.trailingAnchor, constant: -10),
             
-            copyBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
-            copyBtn.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -55),
-            
-            penBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
+            saveBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
+            saveBtn.trailingAnchor.constraint(equalTo: controlsContainer.trailingAnchor, constant: -55),
+                        
+            copyBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant:-12),
+            copyBtn.trailingAnchor.constraint(equalTo: saveBtn.leadingAnchor, constant: -8),
+                    
+            penBtn.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant:-12),
             penBtn.trailingAnchor.constraint(equalTo: copyBtn.leadingAnchor, constant: -8),
             
             drawingToolsStack.bottomAnchor.constraint(equalTo: controlsContainer.bottomAnchor, constant: -12),
@@ -496,6 +515,42 @@ class PinnedImageWindowController: NSWindowController {
         NSPasteboard.general.writeObjects([finalImage])
         showToast(message: "Copied to clipboard ✓")
     }
+    @objc private func saveToFile() {
+        guard let image = pinnedImage else { return }
+        
+        let finalImage = drawingOverlay.renderOn(image: image)
+        
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        savePanel.nameFieldStringValue = generateFileName()
+        savePanel.canCreateDirectories = true
+        
+        savePanel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK, let url = savePanel.url else { return }
+            
+            guard let tiffData = finalImage.tiffRepresentation,
+                  let bitmapRep = NSBitmapImageRep(data: tiffData),
+                  let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+                self?.showToast(message: "Save failed ✗")
+                return
+            }
+            
+            do {
+                try pngData.write(to: url)
+                let fileName = url.lastPathComponent
+                self?.showToast(message: "Saved to \(fileName) ✓")
+            } catch {
+                self?.showToast(message: "Save failed ✗")
+            }
+        }
+    }
+    
+    private func generateFileName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        return "PinSnap_\(timestamp).png"
+    }
     
     private func showToast(message: String) {
         if let label = toastContainer.subviews.first as? NSTextField {
@@ -513,4 +568,5 @@ class PinnedImageWindowController: NSWindowController {
             }
         }
     }
+
 }
