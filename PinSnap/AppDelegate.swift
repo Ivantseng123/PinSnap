@@ -21,6 +21,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupGlobalHotkey()
         checkForUpdates()
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hotkeySettingsDidChange),
+            name: .hotkeySettingsChanged,
+            object: nil
+        )
     }
 
     func setupMenuBar() {
@@ -83,6 +90,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         snapHotKey?.keyDownHandler = {
             DispatchQueue.main.async { self.startCapture() }
         }
+    }
+
+    @objc func hotkeySettingsDidChange() {
+        snapHotKey = nil
+        setupGlobalHotkey()
     }
 
     @objc func startCapture() {
