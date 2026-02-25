@@ -506,6 +506,42 @@ class PinnedImageWindowController: NSWindowController {
         NSPasteboard.general.writeObjects([finalImage])
         showToast(message: "Copied to clipboard ✓")
     }
+    @objc private func saveToFile() {
+        guard let image = pinnedImage else { return }
+        
+        let finalImage = drawingOverlay.renderOn(image: image)
+        
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        savePanel.nameFieldStringValue = generateFileName()
+        savePanel.canCreateDirectories = true
+        
+        savePanel.beginSheetModal(for: window!) { [weak self] response in
+            guard response == .OK, let url = savePanel.url else { return }
+            
+            guard let tiffData = finalImage.tiffRepresentation,
+                  let bitmapRep = NSBitmapImageRep(data: tiffData),
+                  let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
+                self?.showToast(message: "Save failed ✗")
+                return
+            }
+            
+            do {
+                try pngData.write(to: url)
+                let fileName = url.lastPathComponent
+                self?.showToast(message: "Saved to \(fileName) ✓")
+            } catch {
+                self?.showToast(message: "Save failed ✗")
+            }
+        }
+    }
+    
+    private func generateFileName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let timestamp = formatter.string(from: Date())
+        return "PinSnap_\(timestamp).png"
+    }
     
     private func showToast(message: String) {
         if let label = toastContainer.subviews.first as? NSTextField {
@@ -523,4 +559,4 @@ class PinnedImageWindowController: NSWindowController {
             }
         }
     }
-}
+
