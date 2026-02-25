@@ -66,4 +66,3 @@ brew install --cask pinsnap --no-quarantine
 ## 👨‍💻 作者
 
 **Ivan Tseng** (@Ivantseng123)
-```
