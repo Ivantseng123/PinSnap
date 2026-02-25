@@ -50,7 +50,8 @@ class PinnedWindow: NSWindow {
     override var canBecomeKey: Bool { return true }
     override var canBecomeMain: Bool { return true }
     override var acceptsFirstResponder: Bool { return true }
-    var onCopyCommand: (() -> Void)?
+var onCopyCommand: (() -> Void)?
+    var onSaveCommand: (() -> Void)?
     
     private var dragStartLocation: NSPoint?
     
