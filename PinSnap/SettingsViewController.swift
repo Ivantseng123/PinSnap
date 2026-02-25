@@ -6,6 +6,13 @@ class SettingsViewController: NSViewController {
     private var hotkeyField: NSTextField!
     private var recordButton: NSButton!
     private var isRecording = false
+    private var eventMonitor: Any?
+    
+    // Key code 35 corresponds to the 'P' key
+    private let defaultKeyCode: Int = 35
+    
+    private var currentKeyCode: Int?
+    private var currentModifiers: NSEvent.ModifierFlags?
     
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
@@ -46,25 +53,25 @@ class SettingsViewController: NSViewController {
         cancelButton.frame = NSRect(x: 290, y: 20, width: 80, height: 30)
         cancelButton.bezelStyle = .rounded
         view.addSubview(cancelButton)
-        
-        if HotkeySettingsManager.shared.keyCode == nil {
-            HotkeySettingsManager.shared.keyCode = 35
-            HotkeySettingsManager.shared.modifiers = [.command, .shift]
-        }
     }
     
     private func updateHotkeyDisplay() {
+        guard let hotkeyField = hotkeyField else { return }
+        
         if let keyCode = HotkeySettingsManager.shared.keyCode,
            let modifiers = HotkeySettingsManager.shared.modifiers {
             let keyName = keyCodeToString(keyCode)
             let modString = modifiersToString(modifiers)
             hotkeyField.stringValue = "\(modString) + \(keyName)"
         } else {
-            hotkeyField.stringValue = "Cmd + Shift + P"
+            let keyName = keyCodeToString(defaultKeyCode)
+            hotkeyField.stringValue = "Cmd + Shift + \(keyName)"
         }
     }
     
     private func keyCodeToString(_ keyCode: Int) -> String {
+        // Reference: https://github.com/soffes/HotKey/blob/main/HotKey/KeyTypes.swift
+        // Common key codes: 35 = P, 53 = Escape, 36 = Return
         let keyMap: [Int: String] = [
             0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X",
             8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R",
@@ -89,16 +96,15 @@ class SettingsViewController: NSViewController {
     
     @objc private func startRecording() {
         isRecording = true
-        recordButton.title = "按下快捷鍵..."
+        recordButton.title = NSLocalizedString("按下快捷鍵...", comment: "Recording prompt")
         hotkeyField.stringValue = "..."
         
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, self.isRecording else { return event }
             
+            // 53 = Escape key
             if event.keyCode == 53 {
-                self.isRecording = false
-                self.recordButton.title = "錄製"
-                self.updateHotkeyDisplay()
+                self.stopRecording()
                 return nil
             }
             
@@ -108,16 +114,22 @@ class SettingsViewController: NSViewController {
             self.currentKeyCode = event.keyCode
             self.currentModifiers = modifiers
             
-            self.isRecording = false
-            self.recordButton.title = "錄製"
+            self.stopRecording()
             self.updateHotkeyDisplay()
             
             return nil
         }
     }
     
-    private var currentKeyCode: Int?
-    private var currentModifiers: NSEvent.ModifierFlags?
+    private func stopRecording() {
+        isRecording = false
+        recordButton.title = NSLocalizedString("錄製", comment: "Record button")
+        
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+    }
     
     @objc private func saveSettings() {
         if let keyCode = currentKeyCode, let modifiers = currentModifiers {
@@ -125,14 +137,22 @@ class SettingsViewController: NSViewController {
                 keyCode: KeyItem(carbonKeyCode: UInt32(keyCode)),
                 modifiers: modifiers
             )
+            NotificationCenter.default.post(name: .hotkeySettingsChanged, object: nil)
+            view.window?.close()
+        } else {
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("未設定快捷鍵", comment: "Alert title")
+            alert.informativeText = NSLocalizedString("請先錄製新的快捷鍵，或點擊取消關閉視窗。", comment: "Alert message")
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: NSLocalizedString("確定", comment: "OK button"))
+            alert.runModal()
         }
-        
-        NotificationCenter.default.post(name: .hotkeySettingsChanged, object: nil)
-        
-        view.window?.close()
     }
     
     @objc private func cancelSettings() {
+        stopRecording()
+        currentKeyCode = nil
+        currentModifiers = nil
         view.window?.close()
     }
 }

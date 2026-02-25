@@ -9,13 +9,21 @@ final class HotkeySettingsManager {
     private let keyCodeKey = "hotkey_keyCode"
     private let modifiersKey = "hotkey_modifiers"
     
-    /// Sentinel value indicating no hotkey is configured.
     private let noValueSentinel: Int = 0
     
-    /// Serial queue for thread-safe UserDefaults access.
     private let queue = DispatchQueue(label: "com.pinsnap.hotkeysettings", qos: .userInitiated)
     
-    private init() {}
+    private init() {
+        setupDefaultHotkeyIfNeeded()
+    }
+    
+    private func setupDefaultHotkeyIfNeeded() {
+        if keyCode == nil {
+            // 35 = Key code for 'P' key
+            keyCode = 35
+            modifiers = [.command, .shift]
+        }
+    }
     
     /// The key code of the configured hotkey.
     /// Returns `nil` if no hotkey is configured.
