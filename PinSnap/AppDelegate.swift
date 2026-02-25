@@ -39,7 +39,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // -----------------------
         
         menu.addItem(NSMenuItem.separator())
-        
         // --- 加上版本號碼 (可點擊複製) ---
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         let versionItem = NSMenuItem(title: "版本 v\(version)", action: #selector(copyVersion), keyEquivalent: "")
