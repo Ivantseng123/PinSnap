@@ -59,10 +59,17 @@ var onCopyCommand: (() -> Void)?
         if super.performKeyEquivalent(with: event) { return true }
         
         let isCommand = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
+        // Cmd + C 複製
         if isCommand && event.keyCode == 8 {
             onCopyCommand?()
             return true
         }
+        // Cmd + S 存檔
+        if isCommand && event.keyCode == 1 {
+            onSaveCommand?()
+            return true
+        }
+
         return false
     }
     
