@@ -20,11 +20,19 @@ class SettingsViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+    }
+    
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // 重置錄製狀態
+        currentKeyCode = nil
+        currentModifiers = nil
+        isRecording = false
         updateHotkeyDisplay()
     }
     
     private func setupUI() {
-        let titleLabel = NSTextField(labelWithString: NSLocalizedString("Screenshot Hotkey", comment: "Title label"))
+        let titleLabel = NSTextField(labelWithString: NSLocalizedString("截圖快捷鍵", comment: "Title label"))
         titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
         titleLabel.frame = NSRect(x: 20, y: 150, width: 150, height: 20)
         view.addSubview(titleLabel)
@@ -39,16 +47,16 @@ class SettingsViewController: NSViewController {
         hotkeyField.layer?.cornerRadius = 5
         view.addSubview(hotkeyField)
         
-        recordButton = NSButton(title: NSLocalizedString("Record", comment: "Record button"), target: self, action: #selector(startRecording))
+        recordButton = NSButton(title: NSLocalizedString("錄製", comment: "Record button"), target: self, action: #selector(startRecording))
         recordButton.frame = NSRect(x: 280, y: 110, width: 80, height: 30)
         view.addSubview(recordButton)
         
-        let saveButton = NSButton(title: NSLocalizedString("Save", comment: "Save button"), target: self, action: #selector(saveSettings))
+        let saveButton = NSButton(title: NSLocalizedString("儲存", comment: "Save button"), target: self, action: #selector(saveSettings))
         saveButton.frame = NSRect(x: 200, y: 20, width: 80, height: 30)
         saveButton.bezelStyle = .rounded
         view.addSubview(saveButton)
         
-        let cancelButton = NSButton(title: NSLocalizedString("Cancel", comment: "Cancel button"), target: self, action: #selector(cancelSettings))
+        let cancelButton = NSButton(title: NSLocalizedString("取消", comment: "Cancel button"), target: self, action: #selector(cancelSettings))
         cancelButton.frame = NSRect(x: 290, y: 20, width: 80, height: 30)
         cancelButton.bezelStyle = .rounded
         view.addSubview(cancelButton)
@@ -57,9 +65,18 @@ class SettingsViewController: NSViewController {
     private func updateHotkeyDisplay() {
         guard let hotkeyField = hotkeyField else { return }
         
+        // 優先顯示當前錄製的快捷鍵（還沒儲存）
+        if let keyCode = currentKeyCode, let modifiers = currentModifiers {
+            let keyName = keyCodeToString(keyCode)
+            let modString = modifiersToString(modifiers)
+            hotkeyField.stringValue = "\(modString) + \(keyName)"
+            return
+        }
+        
+        // 顯示已儲存的快捷鍵
         guard let keyCode = HotkeySettingsManager.shared.keyCode,
               let modifiers = HotkeySettingsManager.shared.modifiers else {
-            hotkeyField.stringValue = "Cmd + P"
+            hotkeyField.stringValue = "Cmd + Shift + P"
             return
         }
         
@@ -122,7 +139,7 @@ class SettingsViewController: NSViewController {
     
     private func stopRecording() {
         isRecording = false
-        recordButton.title = NSLocalizedString("Record", comment: "Record button")
+        recordButton.title = NSLocalizedString("錄製", comment: "Record button")
         
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
