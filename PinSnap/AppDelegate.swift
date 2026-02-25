@@ -29,6 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "截圖並釘選 (Cmd+Shift+P)", action: #selector(startCapture), keyEquivalent: "P"))
+        menu.addItem(NSMenuItem(title: "設定...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         
         // --- 加上開機啟動的選項 ---
@@ -62,8 +63,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @objc func openSettings() {
+        let settingsWindow = SettingsWindowController()
+        settingsWindow.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
     func setupGlobalHotkey() {
-        snapHotKey = HotKey(key: .p, modifiers: [.command, .shift])
+        if let hotKey = HotkeySettingsManager.shared.getHotKey() {
+            snapHotKey = hotKey
+        } else {
+            snapHotKey = HotKey(key: .p, modifiers: [.command, .shift])
+        }
         snapHotKey?.keyDownHandler = {
             DispatchQueue.main.async { self.startCapture() }
         }
