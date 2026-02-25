@@ -39,9 +39,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // -----------------------
         
         menu.addItem(NSMenuItem.separator())
+        
+        // --- 加上版本號碼 (可點擊複製) ---
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let versionItem = NSMenuItem(title: "版本 v\(version)", action: #selector(copyVersion), keyEquivalent: "")
+        versionItem.target = self
+        menu.addItem(versionItem)
+        // -------------------------------
+        
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         
         statusItem.menu = menu
+    }
+    
+    // 複製版本號碼到剪貼簿
+    @objc func copyVersion() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("v\(version)", forType: .string)
+        
+        // 顯示複製成功的提示 (使用 Toast 或 Alert)
+        let alert = NSAlert()
+        alert.messageText = "已複製"
+        alert.informativeText = "版本號 v\(version) 已複製到剪貼簿"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "確定")
+        alert.runModal()
     }
     
     // 處理開機啟動的邏輯
