@@ -39,9 +39,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // -----------------------
         
         menu.addItem(NSMenuItem.separator())
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let versionItem = NSMenuItem(title: "版本 v\(version)", action: #selector(copyVersion), keyEquivalent: "")
+        versionItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
+        
+        menu.addItem(versionItem)
+        // -------------------------------
+        
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         
         statusItem.menu = menu
+    }
+    
+    // 複製版本號碼到剪貼簿
+    @objc func copyVersion() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("v\(version)", forType: .string)
+        
+        CaptureManager.shared.showGlobalToast(message: "Copied to clipboard v\(version) ✓")
     }
     
     // 處理開機啟動的邏輯
@@ -75,7 +92,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // MARK: - 檢查更新
         @objc func checkForUpdates() {
-            // 這是你專案的 GitHub Latest Release API 網址
             guard let url = URL(string: "https://api.github.com/repos/Ivantseng123/PinSnap/releases/latest") else { return }
             
             let task = URLSession.shared.dataTask(with: url) { data, response, error in
@@ -84,24 +100,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 
-                do {
-                    let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-                    // 將抓到的 "v1.1.0" 去掉 "v"，變成 "1.1.0"
-                    let latestVersion = release.tagName.replacingOccurrences(of: "v", with: "")
-                    
-                    // 取得目前 App 的版本號 (讀取 Xcode 裡的 Version)
-                    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-                    
-                    // 比對版本號：如果目前版本比最新版本舊
-                    if currentVersion.compare(latestVersion, options: .numeric) == .orderedAscending {
-                        DispatchQueue.main.async {
+                DispatchQueue.main.async {
+                    do {
+                        let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+                        let latestVersion = release.tagName.replacingOccurrences(of: "v", with: "")
+                        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+                        
+                        if currentVersion.compare(latestVersion, options: .numeric) == .orderedAscending {
                             self.showUpdateAlert(latestVersion: latestVersion)
+                        } else {
+                            print("目前已經是最新版本！")
                         }
-                    } else {
-                        print("目前已經是最新版本！")
+                    } catch {
+                        print("解析更新資訊失敗: \(error)")
                     }
-                } catch {
-                    print("解析更新資訊失敗: \(error)")
                 }
             }
             task.resume()
@@ -109,23 +121,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         func showUpdateAlert(latestVersion: String) {
             let alert = NSAlert()
-            alert.messageText = "發現新版本！"
-            alert.informativeText = "PinSnap 已經推出 v\(latestVersion) 囉！\n\n請打開終端機 (Terminal) 輸入以下指令來更新：\n\nbrew upgrade --cask pinsnap --no-quarantine"
+            alert.messageText = "New Version Available"
+            alert.informativeText = "PinSnap v\(latestVersion) is now available.\n\nTo update, please run the following command in Terminal:\n\nbrew upgrade --cask pinsnap --no-quarantine"
             alert.alertStyle = .informational
+
+            alert.addButton(withTitle: "Copy Command")
+            alert.addButton(withTitle: "Later")
             
-            alert.addButton(withTitle: "我知道了")
-            let copyButton = alert.addButton(withTitle: "複製更新指令")
-            
-            // 讓視窗浮在最上層
             NSApp.activate(ignoringOtherApps: true)
             
             let response = alert.runModal()
-            // 如果使用者點擊了第二個按鈕 (複製更新指令)
             if response == .alertSecondButtonReturn {
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()
                 pasteboard.setString("brew upgrade --cask pinsnap --no-quarantine", forType: .string)
-                print("更新指令已複製到剪貼簿")
+                print("Update command copied to clipboard ✓")
             }
         }
 }

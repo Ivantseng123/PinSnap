@@ -1,11 +1,14 @@
 import Cocoa
 import VisionKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 // MARK: - 截圖管理器
 class CaptureManager {
     static let shared = CaptureManager()
     private var activeControllers: Set<PinnedImageWindowController> = []
+    
+    private var standaloneToastWindow: NSWindow?
     
     func triggerInteractiveCapture() {
         let tempDir = NSTemporaryDirectory()
@@ -43,6 +46,76 @@ class CaptureManager {
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showGlobalToast(message: String) {
+        if let controller = activeControllers.first {
+            // 情況 A：如果有開啟的截圖視窗，就在該視窗上顯示
+            controller.showToast(message: message)
+        } else {
+            // 情況 B：沒有截圖視窗時，在螢幕中央顯示獨立的懸浮 Toast
+            showStandaloneToast(message: message)
+        }
+    }
+    
+    private func showStandaloneToast(message: String) {
+        DispatchQueue.main.async {
+            let textFont = NSFont.systemFont(ofSize: 16, weight: .bold)
+            let textWidth = (message as NSString).size(withAttributes: [.font: textFont]).width
+            let windowWidth = textWidth + 40
+            
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: windowWidth, height: 40),
+                                  styleMask: [.borderless],
+                                  backing: .buffered, defer: false)
+            
+            window.isReleasedWhenClosed = false
+            
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.level = .screenSaver
+            window.ignoresMouseEvents = true
+            
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: windowWidth, height: 40))
+            container.wantsLayer = true
+            container.layer?.cornerRadius = 10
+            container.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.65).cgColor
+            
+            let label = NSTextField(labelWithString: message)
+            label.font = textFont
+            label.textColor = .white
+            label.alignment = .center
+            label.isBordered = false
+            label.drawsBackground = false
+            label.frame = NSRect(x: 0, y: (40 - 22) / 2, width: windowWidth, height: 22)
+            
+            container.addSubview(label)
+            window.contentView = container
+            
+            if let screen = NSScreen.main {
+                let x = screen.frame.midX - (windowWidth / 2)
+                let y = screen.frame.midY - 20
+                window.setFrameOrigin(NSPoint(x: x, y: y))
+            }
+            
+            self.standaloneToastWindow = window
+            window.alphaValue = 0.0
+            window.makeKeyAndOrderFront(nil)
+            
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.15
+                window.animator().alphaValue = 1.0
+            }) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    NSAnimationContext.runAnimationGroup({ context in
+                        context.duration = 0.3
+                        window.animator().alphaValue = 0.0
+                    }) {
+                        window.close()
+                        self.standaloneToastWindow = nil
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -126,7 +199,6 @@ class DrawingOverlayView: NSView {
     var strokeColor: NSColor = .systemRed
     var baseSize: CGSize = .init(width: 1, height: 1)
     
-    // 💡 修正 1：開放筆跡陣列讓外部讀取，以便合成圖片
     private(set) var strokes: [(path: NSBezierPath, color: NSColor)] = []
     private var currentPath: NSBezierPath?
     
@@ -194,7 +266,7 @@ class DrawingOverlayView: NSView {
         context?.restoreGState()
     }
     
-    // 💡 魔法輔助函數：將目前的筆跡「壓印」到原圖上並輸出成新圖片
+    // 將目前的筆跡「壓印」到原圖上並輸出成新圖片
     func renderOn(image: NSImage) -> NSImage {
         let result = NSImage(size: image.size)
         result.lockFocus() // 開啟圖片繪圖上下文
@@ -202,18 +274,18 @@ class DrawingOverlayView: NSView {
         // 1. 先畫上原本的截圖底圖
         image.draw(at: .zero, from: NSRect(origin: .zero, size: image.size), operation: .sourceOver, fraction: 1.0)
         
-        // 2. 疊加上所有的筆跡 (因為座標已經正規化，所以可以直接畫，不需要縮放)
+        // 2. 疊加上所有的筆跡
         for stroke in strokes {
             stroke.color.setStroke()
             stroke.path.stroke()
         }
         
-        result.unlockFocus() // 關閉上下文
+        result.unlockFocus()
         return result
     }
 }
 
-// MARK: - 浮動視窗控制器 (無敵對比度 UI + 動態 Toast 升級版)
+// MARK: - 浮動視窗控制器
 class PinnedImageWindowController: NSWindowController {
     private let imageView = NSImageView()
     private let drawingOverlay = DrawingOverlayView()
@@ -250,13 +322,8 @@ class PinnedImageWindowController: NSWindowController {
         self.init(window: window)
         self.pinnedImage = image
         
-        (window as? PinnedWindow)?.onCopyCommand = { [weak self] in
-            self?.copyToClipboard()
-        }
-
-        (window as? PinnedWindow)?.onSaveCommand = { [weak self] in
-            self?.saveToFile()
-        }
+        window.onCopyCommand = { [weak self] in self?.copyToClipboard() }
+        window.onSaveCommand = { [weak self] in self?.saveToFile() }
         
         setupUI(with: image)
         setupLiveTextOCR(with: image)
@@ -508,7 +575,6 @@ class PinnedImageWindowController: NSWindowController {
     @objc private func copyToClipboard() {
         guard let image = pinnedImage else { return }
         
-        // 💡 修正 1：利用我們剛剛寫好的 renderOn 魔法函數，將畫筆圖層與原圖合而為一！
         let finalImage = drawingOverlay.renderOn(image: image)
         
         NSPasteboard.general.clearContents()
@@ -552,7 +618,7 @@ class PinnedImageWindowController: NSWindowController {
         return "PinSnap_\(timestamp).png"
     }
     
-    private func showToast(message: String) {
+    public func showToast(message: String) {
         if let label = toastContainer.subviews.first as? NSTextField {
             label.stringValue = message
         }
