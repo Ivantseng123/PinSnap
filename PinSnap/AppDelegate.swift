@@ -15,11 +15,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var snapHotKey: HotKey?
+    private var settingsWindowController: SettingsWindowController?
+    private var captureMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         setupMenuBar()
         setupGlobalHotkey()
+        updateMenuTitle() // 恢复保存的快捷键显示
         checkForUpdates()
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hotkeySettingsDidChange),
+            name: .hotkeySettingsChanged,
+            object: nil
+        )
     }
 
     func setupMenuBar() {
@@ -28,7 +38,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "截圖並釘選 (Cmd+Shift+P)", action: #selector(startCapture), keyEquivalent: "P"))
+        captureMenuItem = NSMenuItem(title: "截圖並釘選", action: #selector(startCapture), keyEquivalent: "P")
+        captureMenuItem?.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(captureMenuItem!)
+        let settingsItem = NSMenuItem(title: "設定...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.keyEquivalentModifierMask = .command
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
         
         // --- 加上開機啟動的選項 ---
@@ -79,11 +94,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @objc func openSettings() {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
+        }
+        settingsWindowController?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
     func setupGlobalHotkey() {
-        snapHotKey = HotKey(key: .p, modifiers: [.command, .shift])
+        if let hotKey = HotkeySettingsManager.shared.getHotKey() {
+            snapHotKey = hotKey
+        } else {
+            snapHotKey = HotKey(key: .p, modifiers: [.command, .shift])
+        }
         snapHotKey?.keyDownHandler = {
             DispatchQueue.main.async { self.startCapture() }
         }
+    }
+
+    @objc func hotkeySettingsDidChange() {
+        snapHotKey = nil
+        setupGlobalHotkey()
+        updateMenuTitle()
+    }
+    
+    private func updateMenuTitle() {
+        guard let keyCode = HotkeySettingsManager.shared.keyCode,
+              let modifiers = HotkeySettingsManager.shared.modifiers else {
+            return
+        }
+        
+        let keyName = keyCodeToString(keyCode)
+        captureMenuItem?.title = "截圖並釘選"
+        
+        // 将 keyCode 转换为单个字符作为 keyEquivalent
+        let keyChar = keyCodeToKeyEquivalent(keyCode)
+        captureMenuItem?.keyEquivalent = keyChar
+        captureMenuItem?.keyEquivalentModifierMask = modifiers
+    }
+    
+    private func keyCodeToKeyEquivalent(_ keyCode: Int) -> String {
+        let keyMap: [Int: String] = [
+            0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x",
+            8: "c", 9: "v", 11: "b", 12: "q", 13: "w", 14: "e", 15: "r",
+            16: "y", 17: "t", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6",
+            23: "5", 24: "=", 25: "9", 26: "7", 27: "-", 28: "8", 29: "0",
+            30: "]", 31: "o", 32: "u", 33: "[", 34: "i", 35: "p", 36: "\r",
+            37: "l", 38: "j", 39: "'", 40: "k", 41: ";", 42: "\\", 43: ",",
+            44: "/", 45: "n", 46: "m", 47: ".", 48: "\t", 49: " ",
+            50: "`", 51: "\u{8}", 53: "\u{1b}"
+        ]
+        return keyMap[keyCode] ?? ""
+    }
+    
+    private func keyCodeToString(_ keyCode: Int) -> String {
+        let keyMap: [Int: String] = [
+            0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X",
+            8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R",
+            16: "Y", 17: "T", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6",
+            23: "5", 24: "=", 25: "9", 26: "7", 27: "-", 28: "8", 29: "0",
+            30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P", 36: "Return",
+            37: "L", 38: "J", 39: "'", 40: "K", 41: ";", 42: "\\", 43: ",",
+            44: "/", 45: "N", 46: "M", 47: ".", 48: "Tab", 49: "Space",
+            50: "`", 51: "Delete", 53: "Escape"
+        ]
+        return keyMap[keyCode] ?? "Key\(keyCode)"
+    }
+    
+    private func modifiersToString(_ modifiers: NSEvent.ModifierFlags) -> String {
+        var parts: [String] = []
+        if modifiers.contains(.command) { parts.append("Cmd") }
+        if modifiers.contains(.option) { parts.append("Option") }
+        if modifiers.contains(.control) { parts.append("Control") }
+        if modifiers.contains(.shift) { parts.append("Shift") }
+        return parts.joined(separator: "+")
     }
 
     @objc func startCapture() {
