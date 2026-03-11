@@ -1,462 +1,411 @@
 import Cocoa
 import ApplicationServices
+import ScreenCaptureKit
 
-// MARK: - 智慧截圖模式
-enum SmartCaptureMode {
-    case window    // 擷取視窗
-    case uiElement // 擷取 UI 元素
-    case area      // 自由框選
-}
-
-// MARK: - 視窗資訊結構
 struct WindowInfo {
     let windowId: CGWindowID
     let bounds: CGRect
     let ownerName: String
     let windowName: String
     let layer: Int
+    var scWindow: SCWindow? = nil
+    var zOrder: Int = 0
 }
 
-// MARK: - 智慧截圖管理器
 class SmartCaptureManager {
     static let shared = SmartCaptureManager()
     
-    private var overlayWindow: SmartCaptureOverlayWindow?
-    private var currentMode: SmartCaptureMode = .window
+    private var overlayWindow: WindowCaptureOverlayWindow?
     
-    func startCapture(mode: SmartCaptureMode) {
-        currentMode = mode
+    func captureWindow() {
+        if !hasScreenRecordingPermission() {
+            requestScreenRecordingPermission()
+            return
+        }
         
-        // 隱藏 PinSnap 主視窗（如果有）
-        NSApp.hide(nil)
-        
-        // 延遲顯示 overlay 確保其他視窗已隱藏
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.showOverlay()
         }
     }
     
+    public func hasScreenRecordingPermission() -> Bool {
+        if #available(macOS 10.15, *) {
+            return CGPreflightScreenCaptureAccess()
+        }
+        return true
+    }
+    
+    public func requestScreenRecordingPermission() {
+        if #available(macOS 10.15, *) {
+            CGRequestScreenCaptureAccess()
+            
+            let alert = NSAlert()
+            alert.messageText = "需要螢幕錄製權限"
+            alert.informativeText = "請在系統偏好設定中允許 PinSnap 進行螢幕錄製，然後再試一次。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "開啟系統偏好設定")
+            alert.addButton(withTitle: "取消")
+            
+            NSApp.activate(ignoringOtherApps: true)
+            
+            if alert.runModal() == .alertFirstButtonReturn {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+    }
+    
     private func showOverlay() {
         guard let screen = NSScreen.main else { return }
+        NSApp.activate(ignoringOtherApps: true)
         
-        overlayWindow = SmartCaptureOverlayWindow(
-            screenFrame: screen.frame,
-            mode: currentMode
-        )
-        overlayWindow?.onCaptureComplete = { [weak self] rect in
-            self?.performCapture(rect: rect)
+        if #available(macOS 13.0, *) {
+            Task {
+                var bgImage: CGImage? = nil
+                do {
+                    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                    if let display = content.displays.first(where: { $0.frame == screen.frame }) ?? content.displays.first {
+                        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+                        let config = SCStreamConfiguration()
+                        let scale = screen.backingScaleFactor
+                        config.width = Int(screen.frame.width * scale)
+                        config.height = Int(screen.frame.height * scale)
+                        config.showsCursor = false
+                        bgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                    }
+                } catch {
+                    print("凍結背景失敗: \(error)")
+                }
+                
+                DispatchQueue.main.async {
+                    self.displayOverlayWindow(screenFrame: screen.frame, bgImage: bgImage)
+                }
+            }
+        }
+    }
+    
+    private func displayOverlayWindow(screenFrame: CGRect, bgImage: CGImage?) {
+        overlayWindow = WindowCaptureOverlayWindow(screenFrame: screenFrame, bgImage: bgImage)
+        overlayWindow?.onCaptureComplete = { [weak self] windowInfo in
+            self?.performCapture(windowInfo: windowInfo)
         }
         overlayWindow?.onCancel = { [weak self] in
             self?.closeOverlay()
         }
         overlayWindow?.makeKeyAndOrderFront(nil)
-        
-        // 啟動螢幕截取
+        overlayWindow?.makeFirstResponder(overlayWindow?.contentView)
         overlayWindow?.startCapture()
     }
     
     private func closeOverlay() {
         overlayWindow?.close()
         overlayWindow = nil
-        NSApp.unhide(nil)
     }
     
-    private func performCapture(rect: CGRect) {
+    private func performCapture(windowInfo: WindowInfo) {
         closeOverlay()
         
-        let tempDir = NSTemporaryDirectory()
-        let tempFileName = UUID().uuidString + ".png"
-        let tempFilePath = URL(fileURLWithPath: tempDir).appendingPathComponent(tempFileName).path
-        
-        // 轉換座標（從 App 座標轉為螢幕座標）
-        guard let screen = NSScreen.main else { return }
-        let screenRect = CGRect(
-            x: rect.origin.x,
-            y: screen.frame.height - rect.origin.y - rect.height,
-            width: rect.width,
-            height: rect.height
-        )
-        
-        let task = Process()
-        task.launchPath = "/usr/sbin/screencapture"
-        task.arguments = ["-x", "-R", "\(Int(screenRect.origin.x)),\(Int(screenRect.origin.y)),\(Int(screenRect.width)),\(Int(screenRect.height))", tempFilePath]
-        
-        task.terminationHandler = { [weak self] process in
-            DispatchQueue.main.async {
-                if FileManager.default.fileExists(atPath: tempFilePath) {
-                    if let image = NSImage(contentsOfFile: tempFilePath) {
-                        self?.createPinnedWindow(with: image)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if #available(macOS 13.0, *) {
+                Task {
+                    do {
+                        let filter: SCContentFilter
+                        let configuration = SCStreamConfiguration()
+                        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+                        
+                        if let scWindow = windowInfo.scWindow {
+                            filter = SCContentFilter(desktopIndependentWindow: scWindow)
+                            configuration.width = Int(scWindow.frame.width * scale)
+                            configuration.height = Int(scWindow.frame.height * scale)
+                        } else {
+                            let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                            guard let display = availableContent.displays.first else { return }
+                            
+                            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+                            configuration.width = Int(windowInfo.bounds.width * scale)
+                            configuration.height = Int(windowInfo.bounds.height * scale)
+                        }
+                        
+                        configuration.showsCursor = false
+                        
+                        let cgImage = try await SCScreenshotManager.captureImage(
+                            contentFilter: filter,
+                            configuration: configuration
+                        )
+                        
+                        let image = NSImage(cgImage: cgImage, size: windowInfo.bounds.size)
+                        
+                        DispatchQueue.main.async {
+                            CaptureManager.shared.createNewPinWindow(with: image)
+                        }
+                    } catch {
+                        print("擷取失敗: \(error)")
                     }
-                    try? FileManager.default.removeItem(atPath: tempFilePath)
-                } else {
-                    NSApp.unhide(nil)
                 }
+            } else {
+                print("此功能需要 macOS 13.0 或以上版本")
             }
         }
-        try? task.run()
     }
     
-    private func createPinnedWindow(with image: NSImage) {
-        // 使用 CaptureManager 來建立釘選視窗
-        let controller = PinnedImageWindowController(image: image)
-        
-        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: controller.window, queue: nil) { _ in
-            NSApp.unhide(nil)
-        }
-        
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-    
-    // MARK: - 視窗偵測
-    func getWindows() -> [WindowInfo] {
-        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+    func getWindowsAsync() async -> [WindowInfo] {
+        if #available(macOS 13.0, *) {
+            do {
+                let cgWindows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                var zOrderDict: [CGWindowID: Int] = [:]
+                for (index, dict) in cgWindows.enumerated() {
+                    if let winId = dict[kCGWindowNumber as String] as? CGWindowID {
+                        zOrderDict[winId] = index
+                    }
+                }
+                
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                var windows: [WindowInfo] = []
+                
+                for window in content.windows {
+                    let ownerName = window.owningApplication?.applicationName ?? ""
+                    let windowName = window.title ?? ""
+                    
+                    if ownerName == "Window Server" || ownerName == "Dock" || ownerName == "SystemUIServer" || ownerName == "PinSnap" || ownerName == "Wallpaper" { continue }
+                    
+                    if window.windowLayer < 0 { continue }
+                    
+                    let bounds = window.frame
+                    if bounds.width < 50 || bounds.height < 50 { continue }
+                    
+                    windows.append(WindowInfo(
+                        windowId: window.windowID,
+                        bounds: bounds,
+                        ownerName: ownerName,
+                        windowName: windowName,
+                        layer: Int(window.windowLayer),
+                        scWindow: window,
+                        zOrder: zOrderDict[window.windowID] ?? 999999
+                    ))
+                }
+                
+                windows.sort { $0.zOrder < $1.zOrder }
+                
+                if let screenFrame = NSScreen.main?.frame {
+                    windows.append(WindowInfo(
+                        windowId: 0,
+                        bounds: screenFrame,
+                        ownerName: "Desktop",
+                        windowName: "Desktop",
+                        layer: -1000,
+                        scWindow: nil,
+                        zOrder: Int.max
+                    ))
+                }
+                
+                return windows
+            } catch {
+                print("獲取視窗列表失敗: \(error)")
+                return []
+            }
+        } else {
             return []
         }
-        
-        var windows: [WindowInfo] = []
-        
-        for window in windowList {
-            guard let windowId = window[kCGWindowNumber as String] as? CGWindowID,
-                  let boundsDict = window[kCGWindowBounds as String] as? [String: CGFloat],
-                  let ownerName = window[kCGWindowOwnerName as String] as? String,
-                  let layer = window[kCGWindowLayer as String] as? Int else {
-                continue
-            }
-            
-            // 過濾系統視窗和選單
-            if layer < 0 || layer > 100 { continue }
-            if ownerName == "Window Server" || ownerName == "Dock" || ownerName == "SystemUIServer" { continue }
-            
-            let bounds = CGRect(
-                x: boundsDict["X"] ?? 0,
-                y: boundsDict["Y"] ?? 0,
-                width: boundsDict["Width"] ?? 0,
-                height: boundsDict["Height"] ?? 0
-            )
-            
-            // 過濾太小的視窗
-            if bounds.width < 50 || bounds.height < 50 { continue }
-            
-            let windowName = window[kCGWindowName as String] as? String ?? ""
-            
-            windows.append(WindowInfo(
-                windowId: windowId,
-                bounds: bounds,
-                ownerName: ownerName,
-                windowName: windowName,
-                layer: layer
-            ))
-        }
-        
-        return windows.sorted { $0.layer > $1.layer }
-    }
-    
-    // MARK: - UI 元素偵測 (Accessibility API)
-    func getUIElementAtPoint(_ point: CGPoint) -> AXUIElement? {
-        let systemWide = AXUIElementCreateSystemWide()
-        var element: AXUIElement?
-        
-        let result = AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element)
-        
-        if result == .success {
-            return element
-        }
-        return nil
-    }
-    
-    func getElementBounds(_ element: AXUIElement) -> CGRect? {
-        var positionValue: CFTypeRef?
-        var sizeValue: CFTypeRef?
-        
-        var positionResult = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
-        var sizeResult = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
-        
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        
-        if positionResult == .success, let posValue = positionValue {
-            AXValueGetValue(posValue as! AXValue, .cgPoint, &position)
-        }
-        
-        if sizeResult == .success, let szValue = sizeValue {
-            AXValueGetValue(szValue as! AXValue, .cgSize, &size)
-        }
-        
-        if positionResult == .success && sizeResult == .success {
-            return CGRect(origin: position, size: size)
-        }
-        
-        return nil
-    }
-    
-    func getElementTitle(_ element: AXUIElement) -> String? {
-        var title: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title)
-        
-        if result == .success, let titleString = title as? String {
-            return titleString
-        }
-        return nil
     }
 }
 
-// MARK: - 智慧截圖浮動視窗
-class SmartCaptureOverlayWindow: NSWindow {
-    private let overlayView: SmartCaptureOverlayView
-    private let captureMode: SmartCaptureMode
-    private var trackingArea: NSTrackingArea?
-    
-    var onCaptureComplete: ((CGRect) -> Void)?
+class WindowCaptureOverlayWindow: NSWindow {
+    fileprivate let overlayView: WindowCaptureOverlayView
+    var onCaptureComplete: ((WindowInfo) -> Void)?
     var onCancel: (() -> Void)?
     
-    init(screenFrame: CGRect, mode: SmartCaptureMode) {
-        self.captureMode = mode
-        self.overlayView = SmartCaptureOverlayView(frame: screenFrame, mode: mode)
+    private var localEventMonitor: Any?
+    
+    init(screenFrame: CGRect, bgImage: CGImage?) {
+        let boundsRect = NSRect(origin: .zero, size: screenFrame.size)
         
-        super.init(
-            contentRect: screenFrame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        self.overlayView = WindowCaptureOverlayView(frame: boundsRect)
+        super.init(contentRect: screenFrame, styleMask: [.borderless], backing: .buffered, defer: false)
         
         self.level = .screenSaver
-        self.isOpaque = false
-        self.backgroundColor = .clear
+        self.isOpaque = true
+        self.backgroundColor = .black
         self.ignoresMouseEvents = false
         self.acceptsMouseMovedEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        self.isReleasedWhenClosed = false
         
-        self.contentView = overlayView
+        let container = NSView(frame: boundsRect)
+        
+        if let cgImage = bgImage {
+            let bgView = NSImageView(frame: boundsRect)
+            bgView.image = NSImage(cgImage: cgImage, size: boundsRect.size)
+            container.addSubview(bgView)
+        }
+        
+        container.addSubview(overlayView)
+        self.contentView = container
     }
     
     func startCapture() {
-        overlayView.onAreaSelected = { [weak self] rect in
-            self?.onCaptureComplete?(rect)
+        overlayView.onAreaSelected = { [weak self] windowInfo in
+            self?.onCaptureComplete?(windowInfo)
         }
         
         overlayView.onCancel = { [weak self] in
             self?.onCancel?()
+        }
+        
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 {
+                self?.onCancel?()
+                return nil
+            }
+            return event
+        }
+        
+        Task { [weak self] in
+            let windows = await SmartCaptureManager.shared.getWindowsAsync()
+            DispatchQueue.main.async {
+                self?.overlayView.cachedWindows = windows
+            }
+        }
+    }
+    
+    deinit {
+        if let monitor = localEventMonitor {
+            NSEvent.removeMonitor(monitor)
         }
     }
     
     override var canBecomeKey: Bool { true }
 }
 
-// MARK: - 智慧截圖覆蓋視圖
-class SmartCaptureOverlayView: NSView {
-    private let mode: SmartCaptureMode
-    private var highlightedRect: CGRect?
-    private var selectionRect: CGRect?
-    private var isDragging = false
-    private var dragStartPoint: CGPoint?
+class WindowCaptureOverlayView: NSView {
+    private var highlightedWindow: WindowInfo?
     
+    private let maskLayer = CAShapeLayer()
     private let highlightLayer = CAShapeLayer()
-    private let dimView = NSView()
-    private let selectionLayer = CAShapeLayer()
     private let instructionLabel = NSTextField()
+    private var trackingArea: NSTrackingArea?
     
-    var onAreaSelected: ((CGRect) -> Void)?
+    override var isFlipped: Bool { return true }
+    override var acceptsFirstResponder: Bool { return true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
+    
+    var cachedWindows: [WindowInfo] = []
+    
+    var onAreaSelected: ((WindowInfo) -> Void)?
     var onCancel: (() -> Void)?
     
-    init(frame: NSRect, mode: SmartCaptureMode) {
-        self.mode = mode
+    override init(frame: NSRect) {
         super.init(frame: frame)
         setupView()
     }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     
     private func setupView() {
-        wantsLayer = true
-        
-        // 暗色遮罩
-        dimView.wantsLayer = true
-        dimView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.3).cgColor
-        dimView.frame = bounds
-        addSubview(dimView)
-        
-        // 高亮層
-        highlightLayer.fillColor = NSColor.clear.cgColor
-        highlightLayer.strokeColor = NSColor.systemBlue.cgColor
-        highlightLayer.lineWidth = 2
-        layer?.addSublayer(highlightLayer)
-        
-        // 選取層
-        selectionLayer.fillColor = NSColor.clear.cgColor
-        selectionLayer.strokeColor = NSColor.white.cgColor
-        selectionLayer.lineWidth = 2
-        selectionLayer.lineDashPattern = [5, 5]
-        layer?.addSublayer(selectionLayer)
-        
-        // 說明文字
-        instructionLabel.isBordered = false
-        instructionLabel.isEditable = false
-        instructionLabel.drawsBackground = true
-        instructionLabel.backgroundColor = NSColor.black.withAlphaComponent(0.7)
-        instructionLabel.textColor = .white
-        instructionLabel.alignment = .center
-        instructionLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        
-        let instructionText: String
-        switch mode {
-        case .window:
-            instructionText = "點擊視窗以擷取 • 按 ESC 取消"
-        case .uiElement:
-            instructionText = "將滑鼠懸停在 UI 元素上然後點擊 • 按 ESC 取消"
-        case .area:
-            instructionText = "拖曳滑鼠框選範圍 • 按 ESC 取消"
+            wantsLayer = true
+            
+            maskLayer.frame = bounds
+            maskLayer.fillColor = NSColor.black.withAlphaComponent(0.4).cgColor
+            maskLayer.fillRule = .evenOdd
+            layer?.addSublayer(maskLayer)
+            
+            highlightLayer.fillColor = NSColor.clear.cgColor
+            highlightLayer.strokeColor = NSColor.systemBlue.cgColor
+            highlightLayer.lineWidth = 4
+            layer?.addSublayer(highlightLayer)
+            
+            let instructionContainer = NSView()
+            instructionContainer.wantsLayer = true
+            instructionContainer.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+            instructionContainer.layer?.cornerRadius = 18
+            instructionContainer.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(instructionContainer)
+            
+            instructionLabel.isBordered = false
+            instructionLabel.isEditable = false
+            instructionLabel.drawsBackground = false
+            instructionLabel.textColor = .white
+            instructionLabel.alignment = .center
+            instructionLabel.font = .systemFont(ofSize: 15, weight: .bold)
+            instructionLabel.stringValue = "Click a window to capture • Press ESC to cancel"
+            instructionLabel.translatesAutoresizingMaskIntoConstraints = false
+            instructionContainer.addSubview(instructionLabel)
+            
+
+            NSLayoutConstraint.activate([
+                instructionContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+                instructionContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -80),
+                instructionContainer.heightAnchor.constraint(equalToConstant: 36),
+                
+                instructionLabel.centerXAnchor.constraint(equalTo: instructionContainer.centerXAnchor),
+                instructionLabel.centerYAnchor.constraint(equalTo: instructionContainer.centerYAnchor),
+                
+                instructionContainer.widthAnchor.constraint(equalTo: instructionLabel.widthAnchor, constant: 40)
+            ])
         }
-        
-        instructionLabel.stringValue = instructionText
-        instructionLabel.sizeToFit()
-        instructionLabel.frame.size.width += 40
-        instructionLabel.frame.size.height += 20
-        instructionLabel.frame.origin = CGPoint(
-            x: (bounds.width - instructionLabel.frame.width) / 2,
-            y: bounds.height - 60
-        )
-        addSubview(instructionLabel)
-        
-        // 監聽滑鼠移動
-        NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown]) { [weak self] event in
-            self?.handleEvent(event)
-            return event
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea = trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        trackingArea = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(trackingArea!)
+    }
+    
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onCancel?()
+        } else {
+            super.keyDown(with: event)
         }
     }
     
-    private func handleEvent(_ event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        
-        switch event.type {
-        case .mouseMoved:
-            handleMouseMoved(at: point)
-        case .leftMouseDown:
-            handleMouseDown(at: point)
-        case .leftMouseDragged:
-            handleMouseDragged(at: point)
-        case .leftMouseUp:
-            handleMouseUp(at: point)
-        case .keyDown:
-            if event.keyCode == 53 { // ESC
-                onCancel?()
-            }
-        default:
-            break
+    override func mouseDown(with event: NSEvent) {
+        if let window = highlightedWindow {
+            onAreaSelected?(window)
         }
+    }
+    
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        handleMouseMoved(at: point)
     }
     
     private func handleMouseMoved(at point: CGPoint) {
-        guard mode != .area else { return }
+        var foundWindow: WindowInfo?
         
-        var foundRect: CGRect?
-        
-        switch mode {
-        case .window:
-            // 偵測視窗
-            let windows = SmartCaptureManager.shared.getWindows()
-            for window in windows {
-                if window.bounds.contains(point) {
-                    foundRect = window.bounds
-                    break
-                }
-            }
-        case .uiElement:
-            // 偵測 UI 元素
-            if let element = SmartCaptureManager.shared.getUIElementAtPoint(point),
-               let bounds = SmartCaptureManager.shared.getElementBounds(element) {
-                foundRect = bounds
-            }
-        case .area:
-            break
-        }
-        
-        highlightedRect = foundRect
-        updateHighlight()
-    }
-    
-    private func handleMouseDown(at point: CGPoint) {
-        if mode == .area {
-            isDragging = true
-            dragStartPoint = point
-            selectionRect = CGRect(origin: point, size: .zero)
-        } else {
-            if let rect = highlightedRect {
-                onAreaSelected?(rect)
+        for window in cachedWindows {
+            if window.bounds.contains(point) {
+                foundWindow = window
+                break
             }
         }
-    }
-    
-    private func handleMouseDragged(at point: CGPoint) {
-        guard mode == .area, isDragging, let startPoint = dragStartPoint else { return }
         
-        let rect = CGRect(
-            x: min(startPoint.x, point.x),
-            y: min(startPoint.y, point.y),
-            width: abs(point.x - startPoint.x),
-            height: abs(point.y - startPoint.y)
-        )
-        
-        selectionRect = rect
-        updateSelection()
-    }
-    
-    private func handleMouseUp(at point: CGPoint) {
-        guard mode == .area, isDragging else { return }
-        
-        isDragging = false
-        
-        if let rect = selectionRect, rect.width > 10, rect.height > 10 {
-            onAreaSelected?(rect)
-        } else {
-            selectionRect = nil
-            updateSelection()
+        if highlightedWindow?.windowId != foundWindow?.windowId {
+            highlightedWindow = foundWindow
+            updateHighlight()
         }
-        
-        dragStartPoint = nil
     }
     
     private func updateHighlight() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         
-        if let rect = highlightedRect {
-            let path = CGPath(rect: rect, transform: nil)
-            highlightLayer.path = path
-            highlightLayer.isHidden = false
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        
+        if let window = highlightedWindow {
+            path.addRect(window.bounds)
             
-            // 創建高亮動畫
-            let animation = CABasicAnimation(keyPath: "opacity")
-            animation.fromValue = 1.0
-            animation.toValue = 0.5
-            animation.duration = 0.5
-            animation.autoreverses = true
-            animation.repeatCount = .infinity
-            highlightLayer.add(animation, forKey: "pulse")
+            let cornerRadius: CGFloat = 8
+            let highlightPath = CGPath(roundedRect: window.bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+            highlightLayer.path = highlightPath
+            highlightLayer.isHidden = false
         } else {
             highlightLayer.isHidden = true
-            highlightLayer.removeAllAnimations()
         }
         
-        CATransaction.commit()
-    }
-    
-    private func updateSelection() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        
-        if let rect = selectionRect {
-            let path = CGPath(rect: rect, transform: nil)
-            selectionLayer.path = path
-            selectionLayer.isHidden = false
-        } else {
-            selectionLayer.isHidden = true
-        }
-        
+        maskLayer.path = path
         CATransaction.commit()
     }
 }
