@@ -131,23 +131,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             task.resume()
         }
         
-        func showUpdateAlert(latestVersion: String) {
-            let alert = NSAlert()
-            alert.messageText = "New Version Available"
-            alert.informativeText = "PinSnap v\(latestVersion) is now available.\n\nTo update, please run the following command in Terminal:\n\nbrew upgrade --cask pinsnap --no-quarantine"
-            alert.alertStyle = .informational
-
-            alert.addButton(withTitle: "Copy Command")
-            alert.addButton(withTitle: "Later")
+    func showUpdateAlert(latestVersion: String) {
+        let alert = NSAlert()
+        alert.messageText = "New Version Available"
+        alert.informativeText = "PinSnap v\(latestVersion) is now available.\n\nTo update, please run the following command in Terminal:\n\nbrew upgrade --cask pinsnap --no-quarantine"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Later")
+        
+        NSApp.activate(ignoringOtherApps: true)
+        
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString("brew upgrade --cask pinsnap --no-quarantine", forType: .string)
             
-            NSApp.activate(ignoringOtherApps: true)
-            
-            let response = alert.runModal()
-            if response == .alertSecondButtonReturn {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString("brew upgrade --cask pinsnap --no-quarantine", forType: .string)
-                print("Update command copied to clipboard ✓")
-            }
+            CaptureManager.shared.showGlobalToast(message: "Command copied to clipboard ✓")
+            print("Update command copied to clipboard ✓")
         }
+    }
 }
