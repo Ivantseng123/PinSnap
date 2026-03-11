@@ -355,59 +355,76 @@ class PinnedImageWindowController: NSWindowController {
     }
     
     private func setupUI(with image: NSImage) {
-            guard let window = self.window, let contentView = window.contentView else { return }
-            
-            let toolbarHeight: CGFloat = 50
-            
-            var rect = window.frame
-            rect.size = NSSize(width: image.size.width, height: image.size.height + toolbarHeight)
-            window.setFrame(rect, display: true)
-            
-            contentView.wantsLayer = true
-            contentView.layer?.cornerRadius = 12
-            contentView.layer?.masksToBounds = true
-            
-            let imageContainer = NSView()
-            imageContainer.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(imageContainer)
-            
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.image = image
-            imageView.imageScaling = .scaleProportionallyUpOrDown
-            imageContainer.addSubview(imageView)
-            
-            drawingOverlay.translatesAutoresizingMaskIntoConstraints = false
-            drawingOverlay.baseSize = image.size
-            imageContainer.addSubview(drawingOverlay)
-            
-            controlsContainer.translatesAutoresizingMaskIntoConstraints = false
-            controlsContainer.wantsLayer = true
-            controlsContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-            controlsContainer.alphaValue = 1.0
-            contentView.addSubview(controlsContainer)
-            
-            NSLayoutConstraint.activate([
-                // 工具列固定在底部
-                controlsContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                controlsContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                controlsContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-                controlsContainer.heightAnchor.constraint(equalToConstant: toolbarHeight),
+        guard let window = self.window, let contentView = window.contentView else { return }
                 
-                imageContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                imageContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-                imageContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
-                imageContainer.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor),
+                let toolbarHeight: CGFloat = 50
+                let screenFrame = NSScreen.main?.visibleFrame ?? .zero
+                let maxWidth = screenFrame.width * 0.8
+                let maxHeight = screenFrame.height * 0.8
+                let imageSize = image.size
                 
-                imageView.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor),
-                imageView.topAnchor.constraint(equalTo: imageContainer.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: imageContainer.bottomAnchor),
+                let widthRatio = maxWidth / imageSize.width
+                let heightRatio = maxHeight / imageSize.height
+                let scale = min(1.0, widthRatio, heightRatio)
                 
-                drawingOverlay.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor),
-                drawingOverlay.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor),
-                drawingOverlay.topAnchor.constraint(equalTo: imageContainer.topAnchor),
-                drawingOverlay.bottomAnchor.constraint(equalTo: imageContainer.bottomAnchor)
-            ])
+                let initialWidth = imageSize.width * scale
+                let initialHeight = imageSize.height * scale
+                
+                window.aspectRatio = NSSize(width: imageSize.width, height: imageSize.height + toolbarHeight)
+                
+                var rect = window.frame
+                rect.size = NSSize(width: initialWidth, height: initialHeight + toolbarHeight)
+                window.setFrame(rect, display: true)
+                
+                contentView.wantsLayer = true
+                contentView.layer?.cornerRadius = 12
+                contentView.layer?.masksToBounds = true
+                
+                let imageContainer = NSView()
+                imageContainer.translatesAutoresizingMaskIntoConstraints = false
+                contentView.addSubview(imageContainer)
+                
+                imageView.translatesAutoresizingMaskIntoConstraints = false
+                imageView.image = image
+                imageView.imageScaling = .scaleAxesIndependently
+                imageContainer.addSubview(imageView)
+                
+                drawingOverlay.translatesAutoresizingMaskIntoConstraints = false
+                drawingOverlay.baseSize = image.size
+                imageContainer.addSubview(drawingOverlay)
+                
+                controlsContainer.translatesAutoresizingMaskIntoConstraints = false
+                controlsContainer.wantsLayer = true
+                controlsContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+                controlsContainer.alphaValue = 1.0
+                contentView.addSubview(controlsContainer)
+                
+                let imageBottomConstraint = imageContainer.bottomAnchor.constraint(equalTo: controlsContainer.topAnchor)
+                
+                NSLayoutConstraint.activate([
+                    controlsContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                    controlsContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                    controlsContainer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+                    controlsContainer.heightAnchor.constraint(equalToConstant: toolbarHeight),
+                    
+                    imageContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                    imageContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                    imageContainer.topAnchor.constraint(equalTo: contentView.topAnchor),
+                    imageBottomConstraint,
+                    
+                    imageView.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor),
+                    imageView.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor),
+                    imageView.topAnchor.constraint(equalTo: imageContainer.topAnchor),
+                    imageView.bottomAnchor.constraint(equalTo: imageContainer.bottomAnchor),
+                    
+                    drawingOverlay.leadingAnchor.constraint(equalTo: imageContainer.leadingAnchor),
+                    drawingOverlay.trailingAnchor.constraint(equalTo: imageContainer.trailingAnchor),
+                    drawingOverlay.topAnchor.constraint(equalTo: imageContainer.topAnchor),
+                    drawingOverlay.bottomAnchor.constraint(equalTo: imageContainer.bottomAnchor)
+                ])
+                
+                imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
             
             
                 let sliderContainer = NSView()
