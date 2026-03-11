@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var snapHotKey: HotKey?
+    private var windowCaptureHotKey: HotKey?
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         setupMenuBar()
@@ -29,20 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "截圖並釘選 (Cmd+Shift+P)", action: #selector(startCapture), keyEquivalent: "P"))
-        menu.addItem(NSMenuItem.separator())
-        
-        // --- 智慧截圖選單 ---
-        let smartCaptureItem = NSMenuItem(title: "智慧截圖", action: nil, keyEquivalent: "")
-        let smartCaptureSubmenu = NSMenu()
-        
-        smartCaptureSubmenu.addItem(NSMenuItem(title: "擷取視窗", action: #selector(captureWindow), keyEquivalent: ""))
-        smartCaptureSubmenu.addItem(NSMenuItem(title: "擷取 UI 元素", action: #selector(captureUIElement), keyEquivalent: ""))
-        smartCaptureSubmenu.addItem(NSMenuItem(title: "自由框選", action: #selector(captureArea), keyEquivalent: ""))
-        
-        smartCaptureItem.submenu = smartCaptureSubmenu
-        menu.addItem(smartCaptureItem)
-        // --------------------
-        
+        menu.addItem(NSMenuItem(title: "截取視窗 (Cmd+Shift+W)", action: #selector(captureWindow), keyEquivalent: "W"))
         menu.addItem(NSMenuItem.separator())
         
         // --- 加上開機啟動的選項 ---
@@ -98,6 +86,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         snapHotKey?.keyDownHandler = {
             DispatchQueue.main.async { self.startCapture() }
         }
+        
+        windowCaptureHotKey = HotKey(key: .w, modifiers: [.command, .shift])
+        windowCaptureHotKey?.keyDownHandler = {
+            DispatchQueue.main.async { self.captureWindow() }
+        }
     }
 
     @objc func startCapture() {
@@ -106,15 +99,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // MARK: - 智慧截圖功能
     @objc func captureWindow() {
-        SmartCaptureManager.shared.startCapture(mode: .window)
-    }
-    
-    @objc func captureUIElement() {
-        SmartCaptureManager.shared.startCapture(mode: .uiElement)
-    }
-    
-    @objc func captureArea() {
-        SmartCaptureManager.shared.startCapture(mode: .area)
+        SmartCaptureManager.shared.captureWindow()
     }
     
     // MARK: - 檢查更新
