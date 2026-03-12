@@ -15,7 +15,7 @@ struct WindowInfo {
 class SmartCaptureManager {
     static let shared = SmartCaptureManager()
     
-    private var overlayWindow: WindowCaptureOverlayWindow?
+    private var overlayWindows: [WindowCaptureOverlayWindow] = []
     
     func captureWindow() {
         if !hasScreenRecordingPermission() {
@@ -57,97 +57,123 @@ class SmartCaptureManager {
     }
     
     private func showOverlay() {
-        guard let screen = NSScreen.main else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        
-        if #available(macOS 13.0, *) {
-            Task {
-                var bgImage: CGImage? = nil
-                do {
-                    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                    if let display = content.displays.first(where: { $0.frame == screen.frame }) ?? content.displays.first {
-                        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-                        let config = SCStreamConfiguration()
-                        let scale = screen.backingScaleFactor
-                        config.width = Int(screen.frame.width * scale)
-                        config.height = Int(screen.frame.height * scale)
-                        config.showsCursor = false
-                        bgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                    }
-                } catch {
-                    print("凍結背景失敗: \(error)")
-                }
-                
-                DispatchQueue.main.async {
-                    self.displayOverlayWindow(screenFrame: screen.frame, bgImage: bgImage)
-                }
-            }
-        }
-    }
-    
-    private func displayOverlayWindow(screenFrame: CGRect, bgImage: CGImage?) {
-        overlayWindow = WindowCaptureOverlayWindow(screenFrame: screenFrame, bgImage: bgImage)
-        overlayWindow?.onCaptureComplete = { [weak self] windowInfo in
-            self?.performCapture(windowInfo: windowInfo)
-        }
-        overlayWindow?.onCancel = { [weak self] in
-            self?.closeOverlay()
-        }
-        overlayWindow?.makeKeyAndOrderFront(nil)
-        overlayWindow?.makeFirstResponder(overlayWindow?.contentView)
-        overlayWindow?.startCapture()
-    }
-    
-    private func closeOverlay() {
-        overlayWindow?.close()
-        overlayWindow = nil
-    }
-    
-    private func performCapture(windowInfo: WindowInfo) {
-        closeOverlay()
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard !NSScreen.screens.isEmpty else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            
             if #available(macOS 13.0, *) {
                 Task {
                     do {
-                        let filter: SCContentFilter
-                        let configuration = SCStreamConfiguration()
-                        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+                        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                        var displayImages: [CGDirectDisplayID: CGImage] = [:]
                         
-                        if let scWindow = windowInfo.scWindow {
-                            filter = SCContentFilter(desktopIndependentWindow: scWindow)
-                            configuration.width = Int(scWindow.frame.width * scale)
-                            configuration.height = Int(scWindow.frame.height * scale)
-                        } else {
-                            let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                            guard let display = availableContent.displays.first else { return }
+                        for display in content.displays {
+
+                            guard let screen = NSScreen.screens.first(where: {
+                                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == display.displayID
+                            }) else { continue }
                             
-                            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-                            configuration.width = Int(windowInfo.bounds.width * scale)
-                            configuration.height = Int(windowInfo.bounds.height * scale)
+                            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+                            let config = SCStreamConfiguration()
+                            let scale = screen.backingScaleFactor
+                            config.width = Int(display.frame.width * scale)
+                            config.height = Int(display.frame.height * scale)
+                            config.showsCursor = false
+                            
+                            if let bgImage = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) {
+                                displayImages[display.displayID] = bgImage
+                            }
                         }
                         
-                        configuration.showsCursor = false
-                        
-                        let cgImage = try await SCScreenshotManager.captureImage(
-                            contentFilter: filter,
-                            configuration: configuration
-                        )
-                        
-                        let image = NSImage(cgImage: cgImage, size: windowInfo.bounds.size)
+                        let windows = await self.getWindowsAsync()
                         
                         DispatchQueue.main.async {
-                            CaptureManager.shared.createNewPinWindow(with: image)
+                            self.displayOverlayWindows(content: content, images: displayImages, windows: windows)
                         }
                     } catch {
-                        print("擷取失敗: \(error)")
+                        print("凍結背景失敗: \(error)")
                     }
                 }
-            } else {
-                print("此功能需要 macOS 13.0 或以上版本")
             }
         }
-    }
+    
+    @available(macOS 13.0, *)
+        private func displayOverlayWindows(content: SCShareableContent, images: [CGDirectDisplayID: CGImage], windows: [WindowInfo]) {
+            closeOverlays()
+            
+            for screen in NSScreen.screens {
+                guard let screenID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+                      let matchedDisplay = content.displays.first(where: { $0.displayID == screenID }) else { continue }
+                
+                let bgImage = images[matchedDisplay.displayID]
+                
+                let overlay = WindowCaptureOverlayWindow(screenFrame: screen.frame, cgScreenFrame: matchedDisplay.frame, bgImage: bgImage)
+                
+                overlay.onCaptureComplete = { [weak self] windowInfo in
+                    self?.performCapture(windowInfo: windowInfo)
+                }
+                overlay.onCancel = { [weak self] in
+                    self?.closeOverlays()
+                }
+                
+
+                overlay.overlayView.cachedWindows = windows
+                
+                overlayWindows.append(overlay)
+                overlay.makeKeyAndOrderFront(nil)
+                overlay.startCapture()
+            }
+        }
+    
+        private func closeOverlays() {
+            for window in overlayWindows {
+                window.close()
+            }
+            overlayWindows.removeAll()
+        }
+    
+    private func performCapture(windowInfo: WindowInfo) {
+            closeOverlays()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                if #available(macOS 13.0, *) {
+                    Task {
+                        do {
+                            let filter: SCContentFilter
+                            let configuration = SCStreamConfiguration()
+                            
+                            let windowCenter = CGPoint(x: windowInfo.bounds.midX, y: windowInfo.bounds.midY)
+                            var scale: CGFloat = 2.0
+                            
+                            let availableContent = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                            
+                            if let matchedDisplay = availableContent.displays.first(where: { $0.frame.contains(windowCenter) }),
+                               let targetScreen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == matchedDisplay.displayID }) {
+                                scale = targetScreen.backingScaleFactor
+                            }
+                            
+                            if let scWindow = windowInfo.scWindow {
+                                filter = SCContentFilter(desktopIndependentWindow: scWindow)
+                                configuration.width = Int(scWindow.frame.width * scale)
+                                configuration.height = Int(scWindow.frame.height * scale)
+                            } else {
+                                guard let display = availableContent.displays.first(where: { $0.frame.contains(windowCenter) }) ?? availableContent.displays.first else { return }
+                                filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+                                configuration.width = Int(windowInfo.bounds.width * scale)
+                                configuration.height = Int(windowInfo.bounds.height * scale)
+                            }
+                            
+                            configuration.showsCursor = false
+                            let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+                            let image = NSImage(cgImage: cgImage, size: windowInfo.bounds.size)
+                            
+                            DispatchQueue.main.async { CaptureManager.shared.createNewPinWindow(with: image) }
+                        } catch {
+                            print("擷取失敗: \(error)")
+                        }
+                    }
+                }
+            }
+        }
     
     func getWindowsAsync() async -> [WindowInfo] {
         if #available(macOS 13.0, *) {
@@ -214,13 +240,14 @@ class WindowCaptureOverlayWindow: NSWindow {
     fileprivate let overlayView: WindowCaptureOverlayView
     var onCaptureComplete: ((WindowInfo) -> Void)?
     var onCancel: (() -> Void)?
-    
     private var localEventMonitor: Any?
     
-    init(screenFrame: CGRect, bgImage: CGImage?) {
+    init(screenFrame: CGRect, cgScreenFrame: CGRect, bgImage: CGImage?) {
         let boundsRect = NSRect(origin: .zero, size: screenFrame.size)
         
         self.overlayView = WindowCaptureOverlayView(frame: boundsRect)
+        self.overlayView.cgScreenFrame = cgScreenFrame
+        
         super.init(contentRect: screenFrame, styleMask: [.borderless], backing: .buffered, defer: false)
         
         self.level = .screenSaver
@@ -232,13 +259,11 @@ class WindowCaptureOverlayWindow: NSWindow {
         self.isReleasedWhenClosed = false
         
         let container = NSView(frame: boundsRect)
-        
         if let cgImage = bgImage {
             let bgView = NSImageView(frame: boundsRect)
             bgView.image = NSImage(cgImage: cgImage, size: boundsRect.size)
             container.addSubview(bgView)
         }
-        
         container.addSubview(overlayView)
         self.contentView = container
     }
@@ -247,7 +272,6 @@ class WindowCaptureOverlayWindow: NSWindow {
         overlayView.onAreaSelected = { [weak self] windowInfo in
             self?.onCaptureComplete?(windowInfo)
         }
-        
         overlayView.onCancel = { [weak self] in
             self?.onCancel?()
         }
@@ -259,25 +283,18 @@ class WindowCaptureOverlayWindow: NSWindow {
             }
             return event
         }
-        
-        Task { [weak self] in
-            let windows = await SmartCaptureManager.shared.getWindowsAsync()
-            DispatchQueue.main.async {
-                self?.overlayView.cachedWindows = windows
-            }
-        }
+
     }
     
     deinit {
-        if let monitor = localEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        if let monitor = localEventMonitor { NSEvent.removeMonitor(monitor) }
     }
     
     override var canBecomeKey: Bool { true }
 }
 
 class WindowCaptureOverlayView: NSView {
+    var cgScreenFrame: CGRect = .zero
     private var highlightedWindow: WindowInfo?
     
     private let maskLayer = CAShapeLayer()
@@ -367,45 +384,48 @@ class WindowCaptureOverlayView: NSView {
     }
     
     override func mouseMoved(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        handleMouseMoved(at: point)
-    }
-    
-    private func handleMouseMoved(at point: CGPoint) {
-        var foundWindow: WindowInfo?
-        
-        for window in cachedWindows {
-            if window.bounds.contains(point) {
-                foundWindow = window
-                break
+
+            if let cgLocation = CGEvent(source: nil)?.location {
+                handleMouseMoved(at: cgLocation)
             }
         }
+    
+    private func handleMouseMoved(at point: CGPoint) {
+            var foundWindow: WindowInfo?
         
-        if highlightedWindow?.windowId != foundWindow?.windowId {
-            highlightedWindow = foundWindow
-            updateHighlight()
+            for window in cachedWindows {
+                if window.bounds.contains(point) {
+                    foundWindow = window
+                    break
+                }
+            }
+            if highlightedWindow?.windowId != foundWindow?.windowId {
+                highlightedWindow = foundWindow
+                updateHighlight()
+            }
         }
-    }
     
     private func updateHighlight() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        
-        let path = CGMutablePath()
-        path.addRect(bounds)
-        
-        if let window = highlightedWindow {
-            path.addRect(window.bounds)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             
-            let cornerRadius: CGFloat = 8
-            let highlightPath = CGPath(roundedRect: window.bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
-            highlightLayer.path = highlightPath
-            highlightLayer.isHidden = false
-        } else {
-            highlightLayer.isHidden = true
+            let path = CGMutablePath()
+            path.addRect(bounds)
+            
+            if let window = highlightedWindow {
+                let localX = window.bounds.minX - cgScreenFrame.minX
+                let localY = window.bounds.minY - cgScreenFrame.minY
+                let localRect = CGRect(x: localX, y: localY, width: window.bounds.width, height: window.bounds.height)
+                
+                path.addRect(localRect)
+                let highlightPath = CGPath(roundedRect: localRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+                highlightLayer.path = highlightPath
+                highlightLayer.isHidden = false
+            } else {
+                highlightLayer.isHidden = true
+            }
+            
+            maskLayer.path = path
+            CATransaction.commit()
         }
-        
-        maskLayer.path = path
-        CATransaction.commit()
-    }
 }
